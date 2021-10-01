@@ -93,7 +93,7 @@ module LogStash
 
         FileUtils.mkdir_p(root_path)
 
-        @since_db_path = ::File.join(root_path, ".sincedb_#{Digest::SHA2.hexdigest(@streams.join(','))}")
+        @since_db_path = ::File.join(root_path, ".sincedb_#{Digest::SHA2.hexdigest(@log_streams.join(','))}")
         @logger.info("Created since_db_path: #{@since_db_path}")
       end
 
