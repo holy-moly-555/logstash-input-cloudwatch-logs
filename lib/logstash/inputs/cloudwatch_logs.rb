@@ -31,6 +31,27 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   # to `true`, then each member of the array is treated as a prefix
   config :log_group, :validate => :string, :list => true
 
+  # The maximum number of times to retry failed requests. Only ~ 500 level server errors and certain ~ 400 level
+  # client errors are retried. Generally, these are throttling errors, data checksum errors, networking errors,
+  # timeout errors and auth errors from expired credentials. The client's default is 3.
+  # Check Constructor Details at https://docs.aws.amazon.com/sdk-for-ruby/v2/api/Aws/CloudWatchLogs/Client.html
+  #
+  # Important: This setting is part of the client configuration. It does not provide custom logic.
+  # Usage consideration: If you're encountering ThrottlingExceptions you wouldn't want to retry the failed
+  # request. So setting retry_limit to 0 to disable automatic retries and configuring :backoff_time
+  # may be a better choice.
+  config :retry_limit, :validate => :number, :default => 3
+
+  # The time the plugin waits after it encounters a violations of the service quota and the next run.
+  # The backoff time is multiplied by the failed runs until it was reset.
+  # Value is in seconds.
+  config :backoff_time, :validate => :number, :default => 0
+
+  # The maximum number of failed runs before the total backoff time is reset.
+  # Must be specified in conjunction with :backoff_time
+  # By default this setting is disabled.
+  config :max_failed_runs, :validate => :number, :default => 0
+
   # Where to write the since database (keeps track of the date
   # the last handled log stream was updated). The default will write
   # sincedb files to some path matching "$HOME/.sincedb*"
@@ -59,10 +80,14 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     settings = defined?(LogStash::SETTINGS) ? LogStash::SETTINGS : nil
     @sincedb = {}
 
+    # tracks the number of failed runs due to violation of the service quota. Influences the throttling delay.
+    @failed_runs = 0
+
     check_start_position_validity
+    check_backoff_settings
 
     Aws::ConfigService::Client.new(aws_options_hash)
-    @cloudwatch = Aws::CloudWatchLogs::Client.new(aws_options_hash)
+    @cloudwatch = Aws::CloudWatchLogs::Client.new(aws_options_hash.merge({:retry_limit => @retry_limit}))
 
     if @sincedb_path.nil?
       if settings
@@ -94,7 +119,15 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
                    :sincedb_path => @sincedb_path, :log_group => @log_group)
     end
 
+    @logger.info("Using sincedb_path #{@sincedb_path}")
   end #def register
+
+  def check_backoff_settings
+    raise LogStash::ConfigurationError, "max_failed_runs must be used in conjunction with backoff_time!" if
+      @max_failed_runs > 0 && @backoff_time == 0
+
+    raise LogStash::ConfigurationError, "backoff_time has to be a positive integer!" if @backoff_time < 0
+  end
 
   public
   def check_start_position_validity
@@ -105,6 +138,19 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
 
     raise LogStash::ConfigurationError, "start_position '#{@start_position}' is invalid! Must be `beginning`, `end`, or an integer."
   end # def check_start_position_validity
+
+  def backoff?
+    @backoff_time > 0
+  end
+
+  def max_failed_runs_reached?
+    @failed_runs == @max_failed_runs
+  end
+
+  def reset_failed_runs
+    @logger.debug('Resetting failed runs counter to 0.')
+    @failed_runs = 0
+  end
 
   # def run
   public
@@ -123,7 +169,20 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           process_group(group)
         end # groups.each
       rescue Aws::CloudWatchLogs::Errors::ThrottlingException
-        @logger.debug("reached rate limit")
+        @logger.warn('Reached service quota.')
+        if backoff?
+          @failed_runs += 1
+
+          if max_failed_runs_reached?
+            @logger.info('Maximum number of failed runs reached. Resetting backoff delay')
+            @failed_runs = 0
+          else
+            sleep_duration = @failed_runs * @backoff_time
+
+            @logger.warn("Sleeping for #{sleep_duration} seconds")
+            Stud.stoppable_sleep((sleep_duration)) { stop? }
+          end
+        end
       end
 
       Stud.stoppable_sleep(@interval) { stop? }
@@ -163,14 +222,14 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     groups.each do |group|
       if !sincedb.member?(group)
         case @start_position
-          when 'beginning'
-            sincedb[group] = 0
+        when 'beginning'
+          sincedb[group] = 0
 
-          when 'end'
-            sincedb[group] = DateTime.now.strftime('%Q')
+        when 'end'
+          sincedb[group] = DateTime.now.strftime('%Q')
 
-          else
-            sincedb[group] = DateTime.now.strftime('%Q').to_i - (@start_position * 1000)
+        else
+          sincedb[group] = DateTime.now.strftime('%Q').to_i - (@start_position * 1000)
         end # case @start_position
       end
     end
@@ -189,13 +248,18 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           :interleaved => true,
           :next_token => next_token
       }
+      @logger.debug("Fetching log events for group #{group} with token #{next_token}")
+
       resp = @cloudwatch.filter_log_events(params)
+
+      @logger.debug("Fetched #{resp.events.size} log events for group #{group}")
 
       resp.events.each do |event|
         process_log(event, group)
       end
 
       _sincedb_write
+      reset_failed_runs if backoff? && @failed_runs > 0
 
       next_token = resp.next_token
       break if next_token.nil?

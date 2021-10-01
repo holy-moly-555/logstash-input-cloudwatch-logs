@@ -25,6 +25,9 @@ and ingest all logs available in all of the matching groups.
 | start_position | `beginning`, `end`, or an Integer | No | `beginning` |
 | sincedb_path | string | No | `$HOME/.sincedb*` |
 | interval | number | No | 60 |
+| retry_limit | number | No | 3 |
+| backoff_time | number | No | 0 |
+| max_failed_runs | number | No | 0 |
 | aws_credentials_file | string | No | |
 | access_key_id | string | No | |
 | secret_access_key | string | No | |
@@ -42,6 +45,30 @@ Valid options for `start_position` are:
 * `beginning` - Reads from the beginning of the group (default)
 * `end` - Sets the sincedb to now, and reads any new messages going forward
 * Integer - Number of seconds in the past to begin reading at
+
+#### `retry_limit`
+
+The maximum number of times to retry failed requests. Only ~ 500 level server errors and certain ~ 400 level
+client errors are retried. Generally, these are throttling errors, data checksum errors, networking errors,
+timeout errors and auth errors from expired credentials. The client's default is 3.
+Refer to the [Constructor Details](https://docs.aws.amazon.com/sdk-for-ruby/v2/api/Aws/CloudWatchLogs/Client.html).
+
+Important: This setting is part of the client configuration. It does not provide custom logic.
+Usage consideration: If you're encountering ThrottlingExceptions you wouldn't want to retry the failed
+request. So setting retry_limit to 0 to disable automatic retries and configuring `backoff_time`
+may be a better choice.
+
+#### `backoff_time`
+
+The time the plugin waits after it encounters a violations of the service quota and the next run.
+The backoff time is multiplied by the failed runs until it was reset.
+Value is in seconds.
+
+#### `max_failed_runs`
+
+The maximum number of failed runs before the total backoff time is reset.
+Must be specified in conjunction with backoff_time
+By default this setting is disabled.
 
 #### Logstash Default config params
 Other standard logstash parameters are available such as:
