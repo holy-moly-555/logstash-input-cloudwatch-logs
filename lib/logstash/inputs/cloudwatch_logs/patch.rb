@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # This is patch related to the autoloading and ruby
 #
 # The fix exist in jruby 9k but not in the current jruby, not sure when or it will be backported
