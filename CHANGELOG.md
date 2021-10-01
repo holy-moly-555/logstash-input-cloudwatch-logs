@@ -5,6 +5,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [v1.1.0] (2021-09-29)
+* add backoff mechanism to throttle runs when service quota is reached ([fb81c0e](https://github.com/holy-moly-555/logstash-input-cloudwatch-logs/commit/fb81c0ec335779e51226cac0aa0db9411d292a60))
+
 ## [v1.0.3] (2018-05-28)
 * Update minimum version of `logstash-mixin-aws` to support assume role ([#9a4677f](https://github.com/lukewaite/logstash-input-cloudwatch-logs/commit/9a4677fef8bcbf291bd4b357be2a9568ea4f3fc1) - Fixes [#51](https://github.com/lukewaite/logstash-input-cloudwatch-logs/issues/51), [#39](https://github.com/lukewaite/logstash-input-cloudwatch-logs/issues/39))
 
