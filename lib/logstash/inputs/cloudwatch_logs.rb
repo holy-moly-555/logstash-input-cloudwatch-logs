@@ -22,25 +22,43 @@ module LogStash
 
       default :codec, 'plain'
 
-      # Log group(s) to use as an input. If `log_group_prefix` is set
-      # to `true`, then each member of the array is treated as a prefix
+      # Log group of the log streams
       config :log_group, validate: :string
 
+      # Log stream(s) you want to fetch
       config :log_streams, validate: :string, list: true
+
+      # Controls the behaviour if specified log streams do not exist.
+      # When set to `true` the plugin will log a warning and continue.
+      # When set to `false` the plugin will exit.
+      config :ignore_unavailable, validate: :boolean, default: false
+
+      # The Cloudwatch Logs API let's you fetch up to 10000 events or 10 MB worth of network traffic per request.
+      # If there are more events/byte to fetch, the response will be paginated.
+      # When reading from way back in the past (configured via `start_position`) in a high volume log environment
+      # processing a log stream can block the remaining ones until all logs from that stream were processed.
+      # With this setting you can define the maximum number of pages the plugin will request for each log stream.
+      # Any value <= 0 will disable this setting.
+      config :max_pages, validate: :number, default: 0
+
+      # Whether logging of the aws ruby client should be enabled or not
+      # The logs will include the requests to the cloudwatch api
+      config :enable_client_logging, validate: :boolean, default: false
 
       # The maximum number of times to retry failed requests. Only ~ 500 level server errors and certain ~ 400 level
       # client errors are retried. Generally, these are throttling errors, data checksum errors, networking errors,
       # timeout errors and auth errors from expired credentials. The client's default is 3.
       # Check Constructor Details at https://docs.aws.amazon.com/sdk-for-ruby/v2/api/Aws/CloudWatchLogs/Client.html
-      #
-      # Important: This setting is part of the client configuration. It does not provide custom logic.
-      # Usage consideration: If you're encountering ThrottlingExceptions you wouldn't want to retry the failed
-      # request. So setting retry_limit to 0 to disable automatic retries and configuring :backoff_time
-      # may be a better choice.
+      # Important: This setting is part of the aws ruby client configuration and does not affect any custom logic.
+      # Usage consideration:
+      # When you're encountering ThrottlingExceptions it doesn't make sense to let the client retry the same request
+      # two more times. This would put even more pressure on competing pipelines that use this plugin.
+      # Therefore it is highly recommended to set `retry_limit` to 0 and configure `backoff_time` unless you are sure
+      # to not reach the service quota.
       config :retry_limit, validate: :number, default: 3
 
-      # The time the plugin waits after it encounters a violations of the service quota and the next run.
-      # The backoff time is multiplied by the failed runs until it was reset.
+      # The time the plugin waits after it encounters violations of the service quota and the next run.
+      # The backoff time is multiplied by the failed runs until it is reset when a future request succeeds.
       # Value is in seconds.
       config :backoff_time, validate: :number, default: 0
 
@@ -49,37 +67,18 @@ module LogStash
       # By default this setting is disabled.
       config :max_failed_runs, validate: :number, default: 0
 
-      # Where to write the since database (keeps track of the date
-      # the last handled log stream was updated). The default will write
-      # sincedb files to some path matching '$HOME/.sincedb*'
-      # Should be a path with filename not just a directory.
+      # Where to write the since database. Should be a path with filename not just a directory.
       config :since_db_path, validate: :string, default: nil
 
-      # Interval to wait between to check the file list again after a run is finished.
+      # Interval to wait after a run is finished.
       # Value is in seconds.
       config :interval, validate: :number, default: 60
 
-      # When a new log group is encountered at initial plugin start (not already in
-      # sincedb), allow configuration to specify where to begin ingestion on this group.
-      # Valid options are: `beginning`, `end`, or an integer, representing number of
-      # seconds before now to read back from.
+      # When a new log stream is encountered at initial plugin start (not already in the since_db),
+      # allow configuration to specify where to begin ingestion on this stream.
+      # Valid options are: `beginning`, `end`, or an integer,
+      # representing the number of seconds before now to read back from.
       config :start_position, default: 'beginning'
-
-      # Controls the behaviour if specified log streams do not exist.
-      # When set to `true` the plugin will log an error message and continues.
-      # When set to `false` the plugin will exit.
-      config :ignore_unavailable, validate: :boolean, default: false
-
-      # The Cloudwatch Logs API let's you fetch up to 10000 events or 10 MB worth of network traffic per request.
-      # If there are more events/byte to fetch, pagination will start.
-      # If you specified a large period to begin reading at in the past you will block trailing streams until all
-      # events are processed.
-      # With this setting you can define the maximum number of pages for every log stream.
-      # Any value <= 0 will disable this setting.
-      config :max_pages, validate: :number, default: 0
-
-      # Whether logging of the aws ruby client should be enabled or not
-      config :enable_client_logging, validate: :boolean, default: false
 
       CLIENT_LOG_PATTERN = '[:client_class :http_request_method :http_request_endpoint]'\
                            '[:http_response_status_code; :time seconds; :retries retries]'\
