@@ -68,6 +68,15 @@ describe LogStash::Inputs::CloudWatchLogs do
     end
   end
 
+  describe '#validate_max_pages_hash' do
+    context 'specifying a key not matching the stream name' do
+      subject { LogStash::Inputs::CloudWatchLogs.new(config.merge({ 'max_pages' => { 'sample-log-stream-3' => 3 } })) }
+    end
+    it 'raises a configuration error' do
+      expect { subject.register }.to raise_error(LogStash::ConfigurationError)
+    end
+  end
+
   describe '#check_backoff_settings' do
     context 'backoff_time set to a valid integer' do
       subject { LogStash::Inputs::CloudWatchLogs.new(config.merge({ 'backoff_time' => 10 })) }

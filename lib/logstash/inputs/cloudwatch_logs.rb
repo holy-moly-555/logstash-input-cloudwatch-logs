@@ -39,7 +39,7 @@ module LogStash
       # processing a log stream can block the remaining ones until all logs from that stream were processed.
       # With this setting you can define the maximum number of pages the plugin will request for each log stream.
       # Any value <= 0 will disable this setting.
-      config :max_pages, validate: :number, default: 0
+      config :max_pages, validate: :hash, default: nil
 
       # Whether logging of the aws ruby client should be enabled or not
       # The logs will include the requests to the cloudwatch api
@@ -97,6 +97,33 @@ module LogStash
         @logger.info("Created since_db_path: #{@since_db_path}")
       end
 
+      def create_default_max_pages_hash
+        @max_pages = {}
+        @log_streams.each do |stream|
+          # disable pagination throttling for each stream by default
+          @max_pages[stream] = -1
+        end
+      end
+
+      def validate_max_pages_hash
+        # there is no validation necessary for the numeric values since either negative or positive
+        # numbers are valid as well as zero.
+        # so we are only concerned about the keys matching the stream names
+        @logger.debug('Validating keys in max_pages hash against the specified stream names.')
+        max_pages_keys = @max_pages.keys
+
+        unspecified_streams = max_pages_keys - @log_streams
+        unless unspecified_streams.empty?
+          raise LogStash::ConfigurationError,
+                "Streams #{unspecified_streams} specified in :max_pages but not in :log_streams"
+        end
+
+        # set default values for remaining streams
+        (@log_streams - max_pages_keys).each do |stream|
+          @max_pages[stream] = -1
+        end
+      end
+
       def register
         @logger.debug("Registering cloudwatch_logs input for log group #{@log_group}")
         @since_db = {}
@@ -110,6 +137,11 @@ module LogStash
         validate_log_streams
 
         create_default_since_db_path if @since_db_path.nil?
+        if @max_pages.nil?
+          create_default_max_pages_hash
+        else
+          validate_max_pages_hash
+        end
       end
 
       def configure_aws_client
@@ -213,11 +245,17 @@ module LogStash
       end
 
       def process_stream(stream)
+        max_pages = @max_pages[stream]
         num_pages = 0
         next_token = nil
 
         loop do
+          # when encountering a new stream during plugin reload (not restart!)
+          # we will assign the default values for :start_position and :max_pages
           @since_db[stream] = 0 unless @since_db.member?(stream)
+          unless @max_pages.member?(stream)
+            max_pages, @max_pages[stream] = -1
+          end
 
           params = {
             log_group_name: @log_group,
@@ -242,7 +280,7 @@ module LogStash
           next_token = resp.next_token
           num_pages += 1 # no need to handle values <= 0
 
-          break if next_token.nil? || num_pages == @max_pages
+          break if next_token.nil? || num_pages == max_pages
         end
       end
 
