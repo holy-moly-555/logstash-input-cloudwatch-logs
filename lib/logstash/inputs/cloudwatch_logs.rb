@@ -290,7 +290,7 @@ module LogStash
 
       def determine_start_position(streams, since_db)
         streams.each do |stream|
-          next unless since_db.member?(stream)
+          next if since_db.member?(stream)
 
           since_db[stream] = case @start_position
                              when 'beginning'
